@@ -1,11 +1,14 @@
 package com.mail.moa.domain;
 
 import jakarta.persistence.*;
+import lombok.AccessLevel;
 import lombok.Getter;
+import lombok.NoArgsConstructor;
 
 @Entity
 @Table(name = "users")
 @Getter
+@NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class User {
 
     @Id
@@ -19,4 +22,14 @@ public class User {
     private String password;
 
     private String name;
+
+    private User(String userEmail, String password, String name) {
+        this.userEmail = userEmail;
+        this.password = password;
+        this.name = name;
+    }
+
+    public static User createUser(String userEmail, String password, String name) {
+        return new User(userEmail, password, name);
+    }
 }
