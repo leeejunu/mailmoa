@@ -41,5 +41,14 @@ public class EmailAccount {
     @Column(length = 20)
     private String syncStatus;
 
-
+    public static EmailAccount createEmailAccount(String email, String accessToken, String provider, User user) {
+        EmailAccount account = new EmailAccount();
+        account.emailAddress = email;
+        account.accessToken = accessToken;
+        account.provider = provider; // "google"
+        account.user = user;
+        account.authType = AuthType.OAUTH2; // OAuth2 방식임을 명시
+        account.syncStatus = "CONNECTED";
+        return account;
+    }
 }

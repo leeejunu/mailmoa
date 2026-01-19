@@ -19,6 +19,7 @@ public class AuthServiceImpl implements AuthService{
     private final PasswordEncoder passwordEncoder;
     private final JwtTokenProvider jwtTokenProvider;
 
+    /*
     @Override
     @Transactional
     public void join(SignupRequestDto signupRequestDto) {
@@ -50,4 +51,6 @@ public class AuthServiceImpl implements AuthService{
             throw new IllegalStateException("이미 존재하는 회원입니다.");
         });
     }
+    */
+
 }

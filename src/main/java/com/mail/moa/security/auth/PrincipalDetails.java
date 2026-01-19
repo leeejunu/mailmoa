@@ -1,19 +1,29 @@
 package com.mail.moa.security.auth;
 
 import com.mail.moa.domain.User;
+import lombok.AllArgsConstructor;
 import lombok.Getter;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.core.userdetails.UserDetails;
+import org.springframework.security.oauth2.core.user.OAuth2User;
 
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Map;
 
 @Getter
 @RequiredArgsConstructor
-public class PrincipalDetails implements UserDetails {
+@AllArgsConstructor
+public class PrincipalDetails implements UserDetails, OAuth2User {
 
     private final User user; // 우리 도메인 User
+    private Map<String, Object> attributes;
+
+    @Override
+    public Map<String, Object> getAttributes() {
+        return Map.of();
+    }
 
     // 권한 관련 (일단 빈 값으로 설정, 필요 시 Role 추가)
     @Override
@@ -24,7 +34,7 @@ public class PrincipalDetails implements UserDetails {
 
     @Override
     public String getPassword() {
-        return user.getPassword();
+        return null;
     }
 
     @Override
@@ -43,4 +53,9 @@ public class PrincipalDetails implements UserDetails {
 
     @Override
     public boolean isEnabled() { return true; }
+
+    @Override
+    public String getName() {
+        return "";
+    }
 }

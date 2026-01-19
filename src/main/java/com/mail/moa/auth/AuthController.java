@@ -18,6 +18,7 @@ public class AuthController {
 
     private final AuthService authService;
 
+    /*
     @PostMapping("/signup")
     public ResponseEntity<?> signup(@RequestBody SignupRequestDto signupRequestDto) {
         authService.join(signupRequestDto);
@@ -29,4 +30,5 @@ public class AuthController {
         String token = authService.login(signinRequestDto);
         return ResponseEntity.ok().body(token);
     }
+     */
 }

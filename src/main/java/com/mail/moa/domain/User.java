@@ -18,18 +18,18 @@ public class User {
     @Column(unique = true)
     private String userEmail;
 
-    @Column
-    private String password;
+//    @Column
+//    private String password;
 
     private String name;
 
-    private User(String userEmail, String password, String name) {
+    private User(String userEmail, String name) {
         this.userEmail = userEmail;
-        this.password = password;
+//        this.password = password;
         this.name = name;
     }
 
-    public static User createUser(String userEmail, String password, String name) {
-        return new User(userEmail, password, name);
+    public static User createUser(String userEmail, String name) {
+        return new User(userEmail, name);
     }
 }
