@@ -2,7 +2,7 @@ package com.mail.moa.security.oauth;
 
 import com.mail.moa.domain.EmailAccount;
 import com.mail.moa.domain.User;
-import com.mail.moa.emailAcccount.EmailAccountRepository;
+import com.mail.moa.emailAccount.EmailAccountRepository;
 import com.mail.moa.security.auth.PrincipalDetails;
 import com.mail.moa.user.UserRepository;
 import lombok.RequiredArgsConstructor;
