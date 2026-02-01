@@ -10,6 +10,8 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.Map;
+
 @Slf4j
 @RestController
 @RequestMapping("/api/v1/mail")
@@ -18,15 +20,13 @@ public class MailController {
 
     private final MailService mailService;
 
-    @GetMapping
-    public ResponseEntity<?> getEmails(@AuthenticationPrincipal PrincipalDetails principalDetails) {
-        String mails = null;
+    @GetMapping("/fetch")
+    public ResponseEntity<?> fetchMails(@AuthenticationPrincipal PrincipalDetails principalDetails) {
         try {
-            mails = mailService.fetchMails(principalDetails.getUsername());
-        }catch (Exception e) {
-            log.info(e.getMessage());
+            Map<String, Object> mails = mailService.fetchMails(principalDetails.getUsername());
+            return ResponseEntity.ok(mails);
+        } catch (Exception e) {
+            return ResponseEntity.internalServerError().body(Map.of("error", e.getMessage()));
         }
-
-        return ResponseEntity.ok().body(mails);
     }
 }

@@ -1,6 +1,8 @@
 package com.mail.moa.email.service;
 
+import java.util.Map;
+
 public interface MailService {
 
-    String fetchMails(String email) throws Exception;
+    Map<String, Object> fetchMails(String email) throws Exception;
 }
