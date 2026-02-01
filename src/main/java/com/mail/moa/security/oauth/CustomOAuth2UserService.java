@@ -31,12 +31,13 @@ public class CustomOAuth2UserService extends DefaultOAuth2UserService {
         // 3. 로그 출력: 구글로부터 받은 원본 데이터 확인
         log.info("========================================");
         log.info("OAuth2 로그인 시도 - 서비스: {}", userRequest.getClientRegistration().getRegistrationId());
-        log.info("Google Access Token: {}", userRequest.getAccessToken().getTokenValue());
+        log.info("Access Token: {}", userRequest.getAccessToken().getTokenValue());
         log.info("User Attributes: {}", oAuth2User.getAttributes());
         log.info("========================================");
 
         String accessToken = userRequest.getAccessToken().getTokenValue();
         String email = oAuth2User.getAttribute("email");
+        String provider = userRequest.getClientRegistration().getRegistrationId();
 
         // 4. 유저 존재 여부 확인 로그
         User user = userRepository.findByUserEmail(email)
@@ -49,15 +50,16 @@ public class CustomOAuth2UserService extends DefaultOAuth2UserService {
         log.info("연동 대상 유저 확인 완료: {}", user.getUserEmail());
 
         // 5. EmailAccount 생성 및 저장
-        EmailAccount account = EmailAccount.createEmailAccount(
-                email,
-                accessToken,
-                "google",
-                user
-        );
-
-        EmailAccount savedAccount = emailAccountRepository.save(account);
-//        log.info("연동 성공: DB에 EmailAccount(ID: {}) 저장 완료", savedAccount.getId());
+        emailAccountRepository.findByEmailAddress(email)
+                .orElseGet(() -> {
+                    EmailAccount account = EmailAccount.createEmailAccount(
+                            email,
+                            accessToken,
+                            provider,
+                            user
+                    );
+                    return emailAccountRepository.save(account);
+                });
 
         return new PrincipalDetails(user, oAuth2User.getAttributes());
     }
