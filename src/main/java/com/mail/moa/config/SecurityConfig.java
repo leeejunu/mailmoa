@@ -42,7 +42,7 @@ public class SecurityConfig {
                         )
                         .successHandler(customSuccessHandler)
                         // 성공 시 리다이렉트 경로 (선택)
-                        .defaultSuccessUrl("/", true)
+//                        .defaultSuccessUrl("/", true)
                 );
 
         return http.build();
