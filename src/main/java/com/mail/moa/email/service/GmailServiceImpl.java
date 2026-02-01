@@ -3,6 +3,7 @@ package com.mail.moa.email.service;
 import com.mail.moa.domain.EmailAccount;
 import com.mail.moa.emailAccount.EmailAccountRepository;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.client.RestClient;
@@ -11,6 +12,7 @@ import tools.jackson.databind.JsonNode;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 @Transactional(readOnly = true)
@@ -19,34 +21,45 @@ public class GmailServiceImpl implements MailService {
     private final EmailAccountRepository emailAccountRepository;
 
     @Override
-    public Map<String, Object> fetchMails(String email) {
+    public List<Map<String, Object>> fetchMails(String email) {
         EmailAccount emailAccount = emailAccountRepository.findByEmailAddress(email)
                 .orElseThrow(() -> new IllegalStateException("해당 이메일 계정을 찾을 수 없습니다: " + email));
 
         // 2. RestClient 설정 (Base URL과 Authorization 헤더 미리 세팅)
         RestClient restClient = createGoogleRestClient(emailAccount);
 
-        // 3. 메일 리스트 조회 (최신 메일 1건의 ID만 가져오기)
+        // 3. 메일 리스트 조회
         JsonNode findMails = getMails(restClient);
 
-        if (hasMessages(findMails)) {
-            return Map.of("message", "조회된 메일이 없습니다.");
+        log.info("fetch mails: {}", findMails);
+
+        // 메시지가 없으면 빈 리스트 반환
+        if (!hasMessages(findMails)) {
+            return Collections.emptyList();
         }
 
-        String messageId = findMails.get("messages").get(0).get("id").asText();
+        List<Map<String, Object>> mailList = new ArrayList<>();
+        JsonNode messages = findMails.get("messages");
 
-        // 4. 메일 상세 조회
-        JsonNode findMail = getMail(restClient, messageId);
+        // 조회된 ID들을 반복문 돌면서 상세 정보 긁어오기
+        for (JsonNode messageNode : messages) {
+            String messageId = messageNode.get("id").asText();
 
-        // 5. 결과 파싱 (제목, 보낸이, 본문 추출)
-        Map<String, Object> result = parseMessage(messageId, findMail);
+            // 1. 상세 조회
+            JsonNode findMail = getMail(restClient, messageId);
 
-        // 6. 본문(Body) 디코딩 (Base64 URL Safe 방식)
-        String encodedBody = encodedBody(findMail);
+            // 2. 파싱 (제목, 보낸이 등)
+            Map<String, Object> mailData = parseMessage(messageId, findMail);
 
-        decodedBody(encodedBody, result);
+            // 3. 본문 추출 및 디코딩
+            String encodedBody = encodedBody(findMail);
+            decodedBody(encodedBody, mailData);
 
-        return result;
+            // 4. 리스트에 추가
+            mailList.add(mailData);
+        }
+
+        return mailList;
     }
 
     private Map<String, Object> parseMessage(String messageId, JsonNode findMail) {
@@ -113,7 +126,7 @@ public class GmailServiceImpl implements MailService {
 
     private JsonNode getMails(RestClient restClient) {
         return restClient.get()
-                .uri("/users/me/messages?maxResults=1")
+                .uri("/users/me/messages?maxResults=5")
                 .retrieve()
                 .body(JsonNode.class);
     }
