@@ -17,22 +17,28 @@ public class JwtProvider {
 
     private final SecretKey secretKey;
     private final long expirationMs;
+    private final long refreshExpirationMs;
 
     public JwtProvider(
             @Value("${jwt.secret}") String secret,
-            @Value("${jwt.expiration-ms}") long expirationMs
+            @Value("${jwt.expiration-ms}") long expirationMs,
+            @Value("${jwt.refresh-expiration-ms}") long refreshExpirationMs
     ) {
         this.secretKey = Keys.hmacShaKeyFor(secret.getBytes(StandardCharsets.UTF_8));
         this.expirationMs = expirationMs;
+        this.refreshExpirationMs = refreshExpirationMs;
     }
 
-    public String generateToken(String userId) {
-        return Jwts.builder()
-                .subject(userId)
-                .issuedAt(new Date())
-                .expiration(new Date(System.currentTimeMillis() + expirationMs))
-                .signWith(secretKey)
-                .compact();
+    public String generateAccessToken(String userId) {
+        return buildToken(userId, expirationMs);
+    }
+
+    public String generateRefreshToken(String userId) {
+        return buildToken(userId, refreshExpirationMs);
+    }
+
+    public long getRefreshExpirationMs() {
+        return refreshExpirationMs;
     }
 
     public String extractUserId(String token) {
@@ -46,6 +52,15 @@ public class JwtProvider {
         } catch (Exception e) {
             return false;
         }
+    }
+
+    private String buildToken(String userId, long expiration) {
+        return Jwts.builder()
+                .subject(userId)
+                .issuedAt(new Date())
+                .expiration(new Date(System.currentTimeMillis() + expiration))
+                .signWith(secretKey)
+                .compact();
     }
 
     private Claims parseClaims(String token) {

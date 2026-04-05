@@ -1,0 +1,16 @@
+spring:
+  application:
+    name: mailmoa
+  datasource:
+    url: jdbc:mysql://localhost:3306/mailmoa
+    username: your_username
+    password: your_password
+  data:
+    redis:
+      host: localhost
+      port: 6379
+
+jwt:
+  secret: your-secret-key-here  # openssl rand -hex 64 으로 생성
+  expiration-ms: 3600000
+  refresh-expiration-ms: 604800000

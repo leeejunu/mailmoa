@@ -1,4 +1,4 @@
-package com.example.mailmoa.user.domain;
+package com.example.mailmoa.user.domain.model;
 
 import jakarta.persistence.*;
 import lombok.Getter;
@@ -29,6 +29,14 @@ public class User {
 
     @Column(nullable = false, updatable = false)
     private LocalDateTime createdAt;
+
+    public static User create(String email, String encodedPassword, String name) {
+        User user = new User();
+        user.email = email;
+        user.password = encodedPassword;
+        user.name = name;
+        return user;
+    }
 
     @PrePersist
     protected void onCreate() {
