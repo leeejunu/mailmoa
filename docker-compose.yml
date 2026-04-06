@@ -1,0 +1,6 @@
+services:
+  redis:
+    image: redis:7.0
+    container_name: mailmoa-redis
+    ports:
+      - "6379:6379"

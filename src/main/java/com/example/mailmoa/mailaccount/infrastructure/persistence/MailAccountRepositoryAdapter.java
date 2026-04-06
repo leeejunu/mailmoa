@@ -29,4 +29,9 @@ public class MailAccountRepositoryAdapter implements MailAccountRepository {
     public List<MailAccount> findAllByUserId(Long userId) {
         return mailAccountJpaRepository.findAllByUserId(userId);
     }
+
+    @Override
+    public List<MailAccount> findAll() {
+        return mailAccountJpaRepository.findAll();
+    }
 }

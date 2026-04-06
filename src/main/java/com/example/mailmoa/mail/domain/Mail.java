@@ -30,7 +30,13 @@ public class Mail {
     private String senderEmail;
 
     @Column(columnDefinition = "TEXT")
+    private String snippet;
+
+    @Column(columnDefinition = "MEDIUMTEXT")
     private String body;
+
+    @Column(nullable = false)
+    private String provider;
 
     @Column(nullable = false)
     private boolean isRead = false;
@@ -43,4 +49,25 @@ public class Mail {
 
     @Column(nullable = false)
     private LocalDateTime syncedAt;
+
+    public void markAsRead() {
+        this.isRead = true;
+    }
+
+    public static Mail create(Long mailAccountId, String externalMessageId, String subject,
+                              String senderName, String senderEmail, String snippet,
+                              String body, String provider, LocalDateTime receivedAt) {
+        Mail mail = new Mail();
+        mail.mailAccountId = mailAccountId;
+        mail.externalMessageId = externalMessageId;
+        mail.subject = subject;
+        mail.senderName = senderName;
+        mail.senderEmail = senderEmail;
+        mail.snippet = snippet;
+        mail.body = body;
+        mail.provider = provider;
+        mail.receivedAt = receivedAt;
+        mail.syncedAt = LocalDateTime.now();
+        return mail;
+    }
 }

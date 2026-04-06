@@ -33,6 +33,8 @@ public class MailAccount {
 
     private LocalDateTime tokenExpiresAt;
 
+    private String lastHistoryId;
+
     @Column(nullable = false, updatable = false)
     private LocalDateTime createdAt;
 
@@ -52,6 +54,10 @@ public class MailAccount {
         this.accessToken = accessToken;
         this.refreshToken = refreshToken;
         this.tokenExpiresAt = tokenExpiresAt;
+    }
+
+    public void updateLastHistoryId(String historyId) {
+        this.lastHistoryId = historyId;
     }
 
     @PrePersist

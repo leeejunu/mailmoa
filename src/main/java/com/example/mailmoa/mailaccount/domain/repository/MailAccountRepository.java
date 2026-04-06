@@ -10,4 +10,5 @@ public interface MailAccountRepository {
     MailAccount save(MailAccount mailAccount);
     Optional<MailAccount> findByUserIdAndProvider(Long userId, MailProvider provider);
     List<MailAccount> findAllByUserId(Long userId);
+    List<MailAccount> findAll();
 }

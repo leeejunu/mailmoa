@@ -9,8 +9,28 @@ spring:
     redis:
       host: localhost
       port: 6379
+  security:
+    oauth2:
+      client:
+        registration:
+          google:
+            client-id: your-client-id
+            client-secret: your-client-secret
+            scope:
+              - email
+              - profile
+              - https://www.googleapis.com/auth/gmail.readonly
+        provider:
+          google:
+            authorization-uri: https://accounts.google.com/o/oauth2/v2/auth?access_type=offline&prompt=consent
 
 jwt:
   secret: your-secret-key-here  # openssl rand -hex 64 으로 생성
   expiration-ms: 3600000
   refresh-expiration-ms: 604800000
+
+encryption:
+  secret: your-encryption-secret-here  # openssl rand -hex 32 으로 생성
+
+frontend:
+  url: http://localhost:5173

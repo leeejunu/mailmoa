@@ -117,6 +117,11 @@ global/
 └── util/              # JwtProvider 등 공통 유틸
 ```
 
+## 프로젝트 경로
+
+- 백엔드: `/Users/junwoo/Desktop/dev/mailmoa`
+- 프론트엔드: `/Users/junwoo/Desktop/dev/mailmoa_fe`
+
 ## 문서
 
 - 문서 파일은 `docs/` 폴더에 작성
