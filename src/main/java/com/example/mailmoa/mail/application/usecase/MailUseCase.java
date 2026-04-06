@@ -11,4 +11,5 @@ public interface MailUseCase {
     MailDetailResult getMail(Long mailId);
     MailCountResult getMailCount(Long userId);
     void markAsRead(Long mailId);
+    void deleteMail(Long mailId);
 }

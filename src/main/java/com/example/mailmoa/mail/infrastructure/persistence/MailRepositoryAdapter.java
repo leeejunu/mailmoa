@@ -50,6 +50,11 @@ public class MailRepositoryAdapter implements MailRepository {
     }
 
     @Override
+    public void deleteById(Long id) {
+        mailJpaRepository.deleteById(id);
+    }
+
+    @Override
     public Map<String, Long> countByProviderIn(List<Long> accountIds) {
         Map<String, Long> result = new HashMap<>();
         for (Object[] row : mailJpaRepository.countByProviderIn(accountIds)) {

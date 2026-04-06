@@ -15,6 +15,7 @@ public interface MailRepository {
     Set<String> findExternalMessageIdsByMailAccountId(Long mailAccountId);
     Optional<Mail> findById(Long id);
     void save(Mail mail);
+    void deleteById(Long id);
     Map<String, Long> countByProviderIn(List<Long> accountIds);
     long countUnreadByMailAccountIdIn(List<Long> accountIds);
 }
