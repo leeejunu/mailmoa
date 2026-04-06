@@ -2,9 +2,11 @@ package com.example.mailmoa.mail.infrastructure.gmail;
 
 import com.example.mailmoa.mail.application.dto.MailSyncData;
 import com.example.mailmoa.mail.application.dto.SyncResponseResult;
+import com.example.mailmoa.mail.application.dto.TokenRefreshResult;
 import com.example.mailmoa.mail.application.port.GmailPort;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 import tools.jackson.databind.JsonNode;
@@ -27,7 +29,39 @@ public class GmailAdapter implements GmailPort {
     private static final String GMAIL_API_BASE = "https://gmail.googleapis.com/gmail/v1/users/me";
     private static final int PAGE_SIZE = 100;
 
+    @Value("${spring.security.oauth2.client.registration.google.client-id}")
+    private String clientId;
+
+    @Value("${spring.security.oauth2.client.registration.google.client-secret}")
+    private String clientSecret;
+
     private final RestClient restClient = RestClient.create();
+
+    @Override
+    public TokenRefreshResult refreshAccessToken(String refreshToken) {
+        String body = "grant_type=refresh_token&refresh_token=" + refreshToken
+                + "&client_id=" + clientId + "&client_secret=" + clientSecret;
+
+        JsonNode response = restClient.post()
+                .uri("https://oauth2.googleapis.com/token")
+                .header("Content-Type", "application/x-www-form-urlencoded")
+                .body(body)
+                .retrieve()
+                .body(JsonNode.class);
+
+        String accessToken = response.get("access_token").asText();
+        long expiresIn = response.path("expires_in").asLong(3600);
+        return new TokenRefreshResult(accessToken, expiresIn);
+    }
+
+    @Override
+    public void trashMail(String accessToken, String externalMessageId) {
+        restClient.post()
+                .uri(GMAIL_API_BASE + "/messages/{id}/trash", externalMessageId)
+                .header("Authorization", "Bearer " + accessToken)
+                .retrieve()
+                .toBodilessEntity();
+    }
 
     @Override
     public SyncResponseResult fetchMails(String accessToken, String lastHistoryId) {

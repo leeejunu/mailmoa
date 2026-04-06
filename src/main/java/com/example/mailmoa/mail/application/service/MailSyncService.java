@@ -1,10 +1,10 @@
 package com.example.mailmoa.mail.application.service;
 
-import com.example.mailmoa.global.util.AesEncryptor;
 import com.example.mailmoa.mail.application.dto.SyncResponseResult;
 import com.example.mailmoa.mail.application.port.GmailPort;
 import com.example.mailmoa.mail.domain.model.Mail;
 import com.example.mailmoa.mail.domain.repository.MailRepository;
+import com.example.mailmoa.mailaccount.application.service.MailAccountTokenService;
 import com.example.mailmoa.mailaccount.domain.model.MailAccount;
 import com.example.mailmoa.mailaccount.domain.model.MailProvider;
 import com.example.mailmoa.mailaccount.domain.repository.MailAccountRepository;
@@ -25,7 +25,7 @@ public class MailSyncService {
     private final MailAccountRepository mailAccountRepository;
     private final MailRepository mailRepository;
     private final GmailPort gmailPort;
-    private final AesEncryptor aesEncryptor;
+    private final MailAccountTokenService mailAccountTokenService;
 
     @Scheduled(fixedDelay = 300000) // 5분마다
     public void syncAllAccounts() {
@@ -43,7 +43,7 @@ public class MailSyncService {
     public void syncMails(MailAccount account) {
         if (account.getProvider() != MailProvider.GMAIL) return;
 
-        String accessToken = aesEncryptor.decrypt(account.getAccessToken());
+        String accessToken = mailAccountTokenService.getValidAccessToken(account);
         SyncResponseResult result = gmailPort.fetchMails(accessToken, account.getLastHistoryId());
 
         Set<String> existing = mailRepository.findExternalMessageIdsByMailAccountId(account.getId());

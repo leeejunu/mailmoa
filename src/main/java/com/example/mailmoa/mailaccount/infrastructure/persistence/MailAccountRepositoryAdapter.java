@@ -21,6 +21,11 @@ public class MailAccountRepositoryAdapter implements MailAccountRepository {
     }
 
     @Override
+    public Optional<MailAccount> findById(Long id) {
+        return mailAccountJpaRepository.findById(id);
+    }
+
+    @Override
     public Optional<MailAccount> findByUserIdAndProvider(Long userId, MailProvider provider) {
         return mailAccountJpaRepository.findByUserIdAndProvider(userId, provider);
     }

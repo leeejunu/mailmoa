@@ -8,6 +8,7 @@ import java.util.Optional;
 
 public interface MailAccountRepository {
     MailAccount save(MailAccount mailAccount);
+    Optional<MailAccount> findById(Long id);
     Optional<MailAccount> findByUserIdAndProvider(Long userId, MailProvider provider);
     List<MailAccount> findAllByUserId(Long userId);
     List<MailAccount> findAll();
