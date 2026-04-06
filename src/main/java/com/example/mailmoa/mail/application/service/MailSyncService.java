@@ -3,7 +3,7 @@ package com.example.mailmoa.mail.application.service;
 import com.example.mailmoa.global.util.AesEncryptor;
 import com.example.mailmoa.mail.application.dto.SyncResponseResult;
 import com.example.mailmoa.mail.application.port.GmailPort;
-import com.example.mailmoa.mail.domain.Mail;
+import com.example.mailmoa.mail.domain.model.Mail;
 import com.example.mailmoa.mail.domain.repository.MailRepository;
 import com.example.mailmoa.mailaccount.domain.model.MailAccount;
 import com.example.mailmoa.mailaccount.domain.model.MailProvider;

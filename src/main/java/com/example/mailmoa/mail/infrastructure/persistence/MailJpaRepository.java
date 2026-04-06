@@ -1,6 +1,6 @@
 package com.example.mailmoa.mail.infrastructure.persistence;
 
-import com.example.mailmoa.mail.domain.Mail;
+import com.example.mailmoa.mail.domain.model.Mail;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;

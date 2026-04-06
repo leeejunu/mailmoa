@@ -1,6 +1,6 @@
 package com.example.mailmoa.mail.domain.repository;
 
-import com.example.mailmoa.mail.domain.Mail;
+import com.example.mailmoa.mail.domain.model.Mail;
 import org.springframework.data.domain.Pageable;
 
 import java.util.List;

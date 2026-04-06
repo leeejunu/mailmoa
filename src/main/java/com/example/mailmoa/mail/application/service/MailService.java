@@ -4,7 +4,7 @@ import com.example.mailmoa.mail.application.dto.MailCountResult;
 import com.example.mailmoa.mail.application.dto.MailDetailResult;
 import com.example.mailmoa.mail.application.dto.MailResult;
 import com.example.mailmoa.mail.application.usecase.MailUseCase;
-import com.example.mailmoa.mail.domain.Mail;
+import com.example.mailmoa.mail.domain.model.Mail;
 import com.example.mailmoa.mail.domain.repository.MailRepository;
 import com.example.mailmoa.mailaccount.domain.repository.MailAccountRepository;
 import lombok.RequiredArgsConstructor;

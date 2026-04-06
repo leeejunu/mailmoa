@@ -1,6 +1,6 @@
 package com.example.mailmoa.mail.infrastructure.persistence;
 
-import com.example.mailmoa.mail.domain.Mail;
+import com.example.mailmoa.mail.domain.model.Mail;
 import com.example.mailmoa.mail.domain.repository.MailRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Repository;
