@@ -4,6 +4,7 @@ import com.example.mailmoa.global.util.AesEncryptor;
 import com.example.mailmoa.mail.application.dto.TokenRefreshResult;
 import com.example.mailmoa.mail.application.port.GmailPort;
 import com.example.mailmoa.mailaccount.domain.model.MailAccount;
+import com.example.mailmoa.mailaccount.domain.model.MailProvider;
 import com.example.mailmoa.mailaccount.domain.repository.MailAccountRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -21,6 +22,10 @@ public class MailAccountTokenService {
 
     @Transactional
     public String getValidAccessToken(MailAccount account) {
+        if (account.getProvider() != MailProvider.GMAIL) {
+            return aesEncryptor.decrypt(account.getAccessToken());
+        }
+
         if (account.getTokenExpiresAt() != null &&
                 account.getTokenExpiresAt().isAfter(LocalDateTime.now().plusMinutes(5))) {
             return aesEncryptor.decrypt(account.getAccessToken());
