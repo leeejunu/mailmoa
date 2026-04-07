@@ -1,5 +1,6 @@
 package com.example.mailmoa.global.exception;
 
+import com.example.mailmoa.mailaccount.application.exception.NaverAuthException;
 import com.example.mailmoa.user.application.exception.DuplicateEmailException;
 import com.example.mailmoa.user.application.exception.InvalidCredentialsException;
 import org.springframework.http.HttpStatus;
@@ -22,5 +23,12 @@ public class GlobalExceptionHandler {
         return ResponseEntity
                 .status(HttpStatus.UNAUTHORIZED)
                 .body(new ExceptionResponse(HttpStatus.UNAUTHORIZED.value(), e.getMessage()));
+    }
+
+    @ExceptionHandler(NaverAuthException.class)
+    public ResponseEntity<ExceptionResponse> handleNaverAuth(NaverAuthException e) {
+        return ResponseEntity
+                .status(HttpStatus.BAD_REQUEST)
+                .body(new ExceptionResponse(HttpStatus.BAD_REQUEST.value(), e.getMessage()));
     }
 }

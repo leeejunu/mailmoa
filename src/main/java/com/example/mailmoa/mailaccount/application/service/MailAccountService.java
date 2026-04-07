@@ -1,9 +1,12 @@
 package com.example.mailmoa.mailaccount.application.service;
 
 import com.example.mailmoa.global.util.AesEncryptor;
+import com.example.mailmoa.mail.application.port.NaverMailPort;
+import com.example.mailmoa.mailaccount.application.dto.ConnectNaverCommand;
 import com.example.mailmoa.mailaccount.application.dto.SaveMailAccountCommand;
 import com.example.mailmoa.mailaccount.application.usecase.MailAccountUseCase;
 import com.example.mailmoa.mailaccount.domain.model.MailAccount;
+import com.example.mailmoa.mailaccount.domain.model.MailProvider;
 import com.example.mailmoa.mailaccount.domain.repository.MailAccountRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -15,10 +18,11 @@ public class MailAccountService implements MailAccountUseCase {
 
     private final MailAccountRepository mailAccountRepository;
     private final AesEncryptor aesEncryptor;
+    private final NaverMailPort naverMailPort;
 
     @Override
     @Transactional
-    public void saveMailAccount(SaveMailAccountCommand command) {
+    public Long saveMailAccount(SaveMailAccountCommand command) {
         String encryptedAccessToken = aesEncryptor.encrypt(command.accessToken());
         String encryptedRefreshToken = command.refreshToken() != null
                 ? aesEncryptor.encrypt(command.refreshToken())
@@ -29,6 +33,9 @@ public class MailAccountService implements MailAccountUseCase {
                         mailAccount -> updateTokens(mailAccount, encryptedAccessToken, encryptedRefreshToken, command),
                         () -> createMailAccount(command, encryptedAccessToken, encryptedRefreshToken)
                 );
+
+        return mailAccountRepository.findByUserIdAndProvider(command.userId(), command.provider())
+                .orElseThrow().getId();
     }
 
     private void updateTokens(MailAccount mailAccount, String accessToken, String refreshToken, SaveMailAccountCommand command) {
@@ -44,5 +51,21 @@ public class MailAccountService implements MailAccountUseCase {
                 refreshToken,
                 command.tokenExpiresAt()
         ));
+    }
+
+    @Override
+    @Transactional
+    public Long connectNaver(ConnectNaverCommand command) {
+        naverMailPort.testConnection(command.email(), command.password());
+        saveMailAccount(new SaveMailAccountCommand(
+                command.userId(),
+                command.email(),
+                MailProvider.NAVER,
+                command.password(),
+                null,
+                null
+        ));
+        return mailAccountRepository.findByUserIdAndProvider(command.userId(), MailProvider.NAVER)
+                .orElseThrow().getId();
     }
 }
