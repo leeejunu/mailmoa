@@ -23,12 +23,6 @@ Mailmoa는 Gmail, Naver 메일을 하나의 화면에서 확인하고 관리할 
 
 ---
 
-### 요구 사항
-
-- Java 17
-- MySQL 8
-- Redis 7
-
 ### 설치 및 실행
 
 ```bash
