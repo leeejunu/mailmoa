@@ -22,4 +22,7 @@ public interface MailJpaRepository extends JpaRepository<Mail, Long> {
 
     @Query("SELECT COUNT(m) FROM Mail m WHERE m.mailAccountId IN :accountIds AND m.isRead = false")
     long countUnreadByMailAccountIdIn(List<Long> accountIds);
+
+    @Query("SELECT m.externalMessageId FROM Mail m WHERE m.mailAccountId = :mailAccountId ORDER BY m.receivedAt ASC")
+    List<String> findExternalMessageIdsByMailAccountIdOrderByReceivedAt(Long mailAccountId, Pageable pageable);
 }

@@ -1,5 +1,6 @@
 package com.example.mailmoa.mailaccount.presentation.oauth2;
 
+import com.example.mailmoa.mail.application.service.MailSyncService;
 import com.example.mailmoa.mailaccount.application.dto.SaveMailAccountCommand;
 import com.example.mailmoa.mailaccount.application.port.OAuthStatePort;
 import com.example.mailmoa.mailaccount.application.usecase.MailAccountUseCase;
@@ -21,6 +22,7 @@ import org.springframework.stereotype.Component;
 import java.io.IOException;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
+import java.util.concurrent.CompletableFuture;
 
 @Component
 @RequiredArgsConstructor
@@ -29,6 +31,7 @@ public class GoogleOAuth2SuccessHandler implements AuthenticationSuccessHandler 
     private final MailAccountUseCase mailAccountUseCase;
     private final OAuth2AuthorizedClientService authorizedClientService;
     private final OAuthStatePort oAuthStatePort;
+    private final MailSyncService mailSyncService;
 
     @Value("${frontend.url}")
     private String frontendUrl;
@@ -45,7 +48,8 @@ public class GoogleOAuth2SuccessHandler implements AuthenticationSuccessHandler 
         OAuth2AuthorizedClient authorizedClient = loadAuthorizedClient(oauthToken);
         SaveMailAccountCommand command = buildCommand(userId, emailAddress, authorizedClient);
 
-        mailAccountUseCase.saveMailAccount(command);
+        Long accountId = mailAccountUseCase.saveMailAccount(command);
+        CompletableFuture.runAsync(() -> mailSyncService.syncAccountById(accountId));
 
         response.sendRedirect(frontendUrl + "/mail-accounts?connected=true");
     }

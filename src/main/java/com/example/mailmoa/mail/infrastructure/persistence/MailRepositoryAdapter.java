@@ -5,6 +5,7 @@ import com.example.mailmoa.mail.domain.repository.MailRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Repository;
 
+import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 
 import java.util.HashMap;
@@ -52,6 +53,13 @@ public class MailRepositoryAdapter implements MailRepository {
     @Override
     public void deleteById(Long id) {
         mailJpaRepository.deleteById(id);
+    }
+
+    @Override
+    public Optional<String> findOldestExternalMessageIdByMailAccountId(Long mailAccountId) {
+        List<String> result = mailJpaRepository
+                .findExternalMessageIdsByMailAccountIdOrderByReceivedAt(mailAccountId, PageRequest.of(0, 1));
+        return result.isEmpty() ? Optional.empty() : Optional.of(result.get(0));
     }
 
     @Override

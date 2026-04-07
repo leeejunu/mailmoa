@@ -54,6 +54,10 @@ public class Mail {
         this.isRead = true;
     }
 
+    public void updateBody(String body) {
+        this.body = body;
+    }
+
     public static Mail create(Long mailAccountId, String externalMessageId, String subject,
                               String senderName, String senderEmail, String snippet,
                               String body, String provider, LocalDateTime receivedAt) {
