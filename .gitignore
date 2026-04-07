@@ -38,8 +38,6 @@ out/
 
 /docs
 
-README.md
-
 ### Secrets ###
 src/main/resources/application.properties
 src/main/resources/application.yaml
