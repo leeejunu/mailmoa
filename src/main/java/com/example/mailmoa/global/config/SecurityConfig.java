@@ -32,7 +32,8 @@ public class SecurityConfig {
     private static final String[] PERMITALL_ANTPATTERNS = {
             "/api/auth/**",
             "/oauth2/**",
-            "/login/oauth2/**"
+            "/login/oauth2/**",
+            "/api/mails/webhook/gmail"
     };
 
     @Bean

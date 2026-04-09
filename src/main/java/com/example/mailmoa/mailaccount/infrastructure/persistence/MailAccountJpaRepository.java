@@ -10,5 +10,6 @@ import java.util.UUID;
 
 public interface MailAccountJpaRepository extends JpaRepository<MailAccount, Long> {
     Optional<MailAccount> findByUserIdAndProvider(Long userId, MailProvider provider);
+    Optional<MailAccount> findByEmailAddress(String emailAddress);
     List<MailAccount> findAllByUserId(Long userId);
 }
