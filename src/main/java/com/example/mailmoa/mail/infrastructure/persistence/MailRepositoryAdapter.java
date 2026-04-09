@@ -3,11 +3,13 @@ package com.example.mailmoa.mail.infrastructure.persistence;
 import com.example.mailmoa.mail.domain.model.Mail;
 import com.example.mailmoa.mail.domain.repository.MailRepository;
 import lombok.RequiredArgsConstructor;
-import org.springframework.stereotype.Repository;
-
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.stereotype.Repository;
 
+import java.sql.Timestamp;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -19,10 +21,33 @@ import java.util.Set;
 public class MailRepositoryAdapter implements MailRepository {
 
     private final MailJpaRepository mailJpaRepository;
+    private final JdbcTemplate jdbcTemplate;
 
     @Override
     public void saveAll(List<Mail> mails) {
-        mailJpaRepository.saveAll(mails);
+        if (mails.isEmpty()) return;
+        StringBuilder sql = new StringBuilder(
+                "INSERT INTO mail (mail_account_id, external_message_id, subject, sender_name, sender_email, " +
+                "snippet, body, provider, is_read, is_starred, received_at, synced_at) VALUES ");
+        List<Object> params = new ArrayList<>(mails.size() * 12);
+        for (int i = 0; i < mails.size(); i++) {
+            if (i > 0) sql.append(",");
+            sql.append("(?,?,?,?,?,?,?,?,?,?,?,?)");
+            Mail m = mails.get(i);
+            params.add(m.getMailAccountId());
+            params.add(m.getExternalMessageId());
+            params.add(m.getSubject());
+            params.add(m.getSenderName());
+            params.add(m.getSenderEmail());
+            params.add(m.getSnippet());
+            params.add(m.getBody());
+            params.add(m.getProvider());
+            params.add(m.isRead());
+            params.add(m.isStarred());
+            params.add(Timestamp.valueOf(m.getReceivedAt()));
+            params.add(Timestamp.valueOf(m.getSyncedAt()));
+        }
+        jdbcTemplate.update(sql.toString(), params.toArray());
     }
 
     @Override

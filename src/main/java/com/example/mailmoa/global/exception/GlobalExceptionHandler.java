@@ -1,5 +1,6 @@
 package com.example.mailmoa.global.exception;
 
+import com.example.mailmoa.mail.application.exception.MailNotFoundException;
 import com.example.mailmoa.mailaccount.application.exception.NaverAuthException;
 import com.example.mailmoa.user.application.exception.DuplicateEmailException;
 import com.example.mailmoa.user.application.exception.InvalidCredentialsException;
@@ -23,6 +24,13 @@ public class GlobalExceptionHandler {
         return ResponseEntity
                 .status(HttpStatus.UNAUTHORIZED)
                 .body(new ExceptionResponse(HttpStatus.UNAUTHORIZED.value(), e.getMessage()));
+    }
+
+    @ExceptionHandler(MailNotFoundException.class)
+    public ResponseEntity<ExceptionResponse> handleMailNotFound(MailNotFoundException e) {
+        return ResponseEntity
+                .status(HttpStatus.NOT_FOUND)
+                .body(new ExceptionResponse(HttpStatus.NOT_FOUND.value(), e.getMessage()));
     }
 
     @ExceptionHandler(NaverAuthException.class)

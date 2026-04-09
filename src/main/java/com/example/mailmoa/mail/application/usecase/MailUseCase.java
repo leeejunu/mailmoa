@@ -12,5 +12,4 @@ public interface MailUseCase {
     MailCountResult getMailCount(Long userId);
     void markAsRead(Long mailId);
     void deleteMail(Long mailId);
-    int loadOlderNaverMails(Long userId);
 }

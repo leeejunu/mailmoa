@@ -1,5 +1,6 @@
 package com.example.mailmoa.mail.application.service;
 
+import com.example.mailmoa.mail.application.exception.MailNotFoundException;
 import com.example.mailmoa.mail.application.dto.MailCountResult;
 import com.example.mailmoa.mail.application.dto.MailDetailResult;
 import com.example.mailmoa.mail.application.dto.MailResult;
@@ -20,7 +21,6 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.stream.Collectors;
 
 @Service
@@ -74,7 +74,7 @@ public class MailService implements MailUseCase {
     @Transactional
     public void markAsRead(Long mailId) {
         Mail mail = mailRepository.findById(mailId)
-                .orElseThrow(() -> new IllegalArgumentException("Mail not found: " + mailId));
+                .orElseThrow(() -> new MailNotFoundException(mailId));
         mail.markAsRead();
         mailRepository.save(mail);
     }
@@ -83,7 +83,7 @@ public class MailService implements MailUseCase {
     @Transactional
     public void deleteMail(Long mailId) {
         Mail mail = mailRepository.findById(mailId)
-                .orElseThrow(() -> new IllegalArgumentException("Mail not found: " + mailId));
+                .orElseThrow(() -> new MailNotFoundException(mailId));
         MailAccount account = mailAccountRepository.findById(mail.getMailAccountId())
                 .orElseThrow(() -> new IllegalArgumentException("Account not found"));
         String credential = mailAccountTokenService.getValidAccessToken(account);
@@ -99,7 +99,7 @@ public class MailService implements MailUseCase {
     @Transactional
     public MailDetailResult getMail(Long mailId) {
         Mail mail = mailRepository.findById(mailId)
-                .orElseThrow(() -> new IllegalArgumentException("Mail not found: " + mailId));
+                .orElseThrow(() -> new MailNotFoundException(mailId));
 
         if (mail.getBody() == null || mail.getBody().isEmpty()) {
             MailAccount account = mailAccountRepository.findById(mail.getMailAccountId()).orElse(null);
@@ -123,44 +123,6 @@ public class MailService implements MailUseCase {
                 mail.getReceivedAt(),
                 mail.getProvider()
         );
-    }
-
-    @Override
-    @Transactional
-    public int loadOlderNaverMails(Long userId) {
-        List<Long> accountIds = mailAccountRepository.findAllByUserId(userId).stream()
-                .filter(a -> "NAVER".equals(a.getProvider().name()))
-                .map(MailAccount::getId)
-                .toList();
-
-        int total = 0;
-        for (Long accountId : accountIds) {
-            MailAccount account = mailAccountRepository.findById(accountId).orElse(null);
-            if (account == null) continue;
-
-            String oldestUid = mailRepository.findOldestExternalMessageIdByMailAccountId(accountId).orElse(null);
-            if (oldestUid == null) continue;
-
-            long beforeUid = Long.parseLong(oldestUid);
-            if (beforeUid <= 1) continue;
-
-            String password = mailAccountTokenService.getValidAccessToken(account);
-            List<com.example.mailmoa.mail.application.dto.MailSyncData> olderMails =
-                    naverMailPort.fetchOlderMails(account.getEmailAddress(), password, beforeUid, 50);
-
-            Set<String> existing = mailRepository.findExternalMessageIdsByMailAccountId(accountId);
-            List<Mail> newMails = olderMails.stream()
-                    .filter(r -> !existing.contains(r.messageId()))
-                    .map(r -> Mail.create(accountId, r.messageId(), r.subject(), r.senderName(),
-                            r.senderEmail(), r.snippet(), r.body(), r.provider(), r.receivedAt()))
-                    .toList();
-
-            if (!newMails.isEmpty()) {
-                mailRepository.saveAll(newMails);
-                total += newMails.size();
-            }
-        }
-        return total;
     }
 
     private MailResult toResult(Mail mail) {
