@@ -9,26 +9,28 @@ import com.example.mailmoa.mailaccount.domain.model.MailAccount;
 import com.example.mailmoa.mailaccount.domain.model.MailProvider;
 import com.example.mailmoa.mailaccount.application.exception.NaverAuthException;
 import jakarta.mail.*;
-import jakarta.mail.internet.MimeMultipart;
 import jakarta.mail.FetchProfile;
 import jakarta.mail.internet.InternetAddress;
 import jakarta.mail.internet.MimeUtility;
-import jakarta.mail.search.ComparisonTerm;
-import jakarta.mail.search.ReceivedDateTerm;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Date;
 import java.util.List;
 import java.util.Properties;
 
+import reactor.core.publisher.Flux;
+import reactor.core.publisher.Mono;
+import reactor.core.scheduler.Schedulers;
+
 @Slf4j
 @Component
 public class NaverMailAdapter implements NaverMailPort, MailSyncPort, MailBodyPort {
+
+    private static final int CHUNK_SIZE = 100;
 
     @Override
     public MailProvider getSupportedProvider() {
@@ -36,8 +38,31 @@ public class NaverMailAdapter implements NaverMailPort, MailSyncPort, MailBodyPo
     }
 
     @Override
-    public SyncResponseResult fetchMails(MailAccount account, String credential) {
-        return fetchMails(account.getEmailAddress(), credential, account.getLastHistoryId());
+    public Mono<SyncResponseResult> fetchMails(MailAccount account, String credential) {
+        return Mono.fromCallable(() -> {
+            String lastUid = account.getLastHistoryId();
+            if (lastUid == null) {
+                return fetchInitial(account.getEmailAddress(), credential);
+            }
+            return fetchIncremental(account.getEmailAddress(), credential, lastUid);
+        }).subscribeOn(Schedulers.boundedElastic());
+    }
+
+    @Override
+    public Flux<MailSyncData> fetchRemaining(MailAccount account, String credential, String continuationToken) {
+        int remaining = Integer.parseInt(continuationToken);
+        String email = account.getEmailAddress();
+
+        List<int[]> chunks = new ArrayList<>();
+        for (int to = remaining; to >= 1; to -= CHUNK_SIZE) {
+            int from = Math.max(1, to - CHUNK_SIZE + 1);
+            chunks.add(new int[]{from, to});
+        }
+
+        return Flux.fromIterable(chunks)
+                .flatMap(range -> Mono.fromCallable(() -> fetchRange(email, credential, range[0], range[1]))
+                        .subscribeOn(Schedulers.boundedElastic()))
+                .flatMap(Flux::fromIterable);
     }
 
     private static final String IMAP_HOST = "imap.naver.com";
@@ -57,8 +82,7 @@ public class NaverMailAdapter implements NaverMailPort, MailSyncPort, MailBodyPo
         }
     }
 
-    @Override
-    public SyncResponseResult fetchMails(String email, String password, String lastUid) {
+    private SyncResponseResult fetchInitial(String email, String password) {
         Store store = null;
         Folder inbox = null;
         try {
@@ -66,19 +90,11 @@ public class NaverMailAdapter implements NaverMailPort, MailSyncPort, MailBodyPo
             inbox = store.getFolder("INBOX");
             inbox.open(Folder.READ_ONLY);
 
-            UIDFolder uidFolder = (UIDFolder) inbox;
-            Message[] messages;
+            int count = inbox.getMessageCount();
+            if (count == 0) return new SyncResponseResult(List.of(), null, null);
 
-            if (lastUid == null) {
-                int count = inbox.getMessageCount();
-                if (count == 0) return new SyncResponseResult(List.of(), null);
-                messages = inbox.getMessages(1, count);
-            } else {
-                long lastUidLong = Long.parseLong(lastUid);
-                messages = uidFolder.getMessagesByUID(lastUidLong + 1, UIDFolder.LASTUID);
-            }
-
-            if (messages.length == 0) return new SyncResponseResult(List.of(), lastUid);
+            int from = Math.max(1, count - 99);
+            Message[] messages = inbox.getMessages(from, count);
 
             FetchProfile fp = new FetchProfile();
             fp.add(FetchProfile.Item.ENVELOPE);
@@ -87,8 +103,9 @@ public class NaverMailAdapter implements NaverMailPort, MailSyncPort, MailBodyPo
             fp.add("Subject");
             inbox.fetch(messages, fp);
 
+            UIDFolder uidFolder = (UIDFolder) inbox;
             List<MailSyncData> mails = new ArrayList<>();
-            long maxUid = lastUid != null ? Long.parseLong(lastUid) : 0;
+            long maxUid = 0;
 
             for (Message message : messages) {
                 try {
@@ -101,9 +118,55 @@ public class NaverMailAdapter implements NaverMailPort, MailSyncPort, MailBodyPo
                 }
             }
 
-            return new SyncResponseResult(mails, maxUid > 0 ? String.valueOf(maxUid) : lastUid);
+            String nextPageToken = from > 1 ? String.valueOf(from - 1) : null;
+            return new SyncResponseResult(mails, maxUid > 0 ? String.valueOf(maxUid) : null, nextPageToken);
         } catch (Exception e) {
             log.error("Naver IMAP fetch failed: {}", e.getMessage());
+            throw new RuntimeException("Naver 메일 동기화 실패", e);
+        } finally {
+            closeFolder(inbox);
+            closeStore(store);
+        }
+    }
+
+    private SyncResponseResult fetchIncremental(String email, String password, String lastUid) {
+        Store store = null;
+        Folder inbox = null;
+        try {
+            store = openStore(email, password);
+            inbox = store.getFolder("INBOX");
+            inbox.open(Folder.READ_ONLY);
+
+            UIDFolder uidFolder = (UIDFolder) inbox;
+            long lastUidLong = Long.parseLong(lastUid);
+            Message[] messages = uidFolder.getMessagesByUID(lastUidLong + 1, UIDFolder.LASTUID);
+
+            if (messages.length == 0) return new SyncResponseResult(List.of(), lastUid, null);
+
+            FetchProfile fp = new FetchProfile();
+            fp.add(FetchProfile.Item.ENVELOPE);
+            fp.add(UIDFolder.FetchProfileItem.UID);
+            fp.add("From");
+            fp.add("Subject");
+            inbox.fetch(messages, fp);
+
+            List<MailSyncData> mails = new ArrayList<>();
+            long maxUid = lastUidLong;
+
+            for (Message message : messages) {
+                try {
+                    long uid = uidFolder.getUID(message);
+                    maxUid = Math.max(maxUid, uid);
+                    MailSyncData data = toMailSyncData(message, uid);
+                    if (data != null) mails.add(data);
+                } catch (Exception e) {
+                    log.warn("Naver message parse failed: {}", e.getMessage());
+                }
+            }
+
+            return new SyncResponseResult(mails, String.valueOf(maxUid), null);
+        } catch (Exception e) {
+            log.error("Naver IMAP incremental fetch failed: {}", e.getMessage());
             throw new RuntimeException("Naver 메일 동기화 실패", e);
         } finally {
             closeFolder(inbox);
@@ -166,7 +229,7 @@ public class NaverMailAdapter implements NaverMailPort, MailSyncPort, MailBodyPo
     }
 
     @Override
-    public List<MailSyncData> fetchOlderMails(String email, String password, long beforeUid, int limit) {
+    public List<MailSyncData> fetchRange(String email, String password, int from, int to) {
         Store store = null;
         Folder inbox = null;
         try {
@@ -174,36 +237,34 @@ public class NaverMailAdapter implements NaverMailPort, MailSyncPort, MailBodyPo
             inbox = store.getFolder("INBOX");
             inbox.open(Folder.READ_ONLY);
 
-            UIDFolder uidFolder = (UIDFolder) inbox;
-            if (beforeUid <= 1) return List.of();
+            int count = inbox.getMessageCount();
+            int actualTo = Math.min(to, count);
+            if (from > actualTo) return List.of();
 
-            Message[] older = uidFolder.getMessagesByUID(1, beforeUid - 1);
-            if (older.length == 0) return List.of();
-
-            int start = Math.max(0, older.length - limit);
-            Message[] toFetch = Arrays.copyOfRange(older, start, older.length);
+            Message[] messages = inbox.getMessages(from, actualTo);
 
             FetchProfile fp = new FetchProfile();
             fp.add(FetchProfile.Item.ENVELOPE);
             fp.add(UIDFolder.FetchProfileItem.UID);
             fp.add("From");
             fp.add("Subject");
-            inbox.fetch(toFetch, fp);
+            inbox.fetch(messages, fp);
 
+            UIDFolder uidFolder = (UIDFolder) inbox;
             List<MailSyncData> mails = new ArrayList<>();
-            for (Message message : toFetch) {
+            for (Message message : messages) {
                 try {
                     long uid = uidFolder.getUID(message);
                     MailSyncData data = toMailSyncData(message, uid);
                     if (data != null) mails.add(data);
                 } catch (Exception e) {
-                    log.warn("Naver older message parse failed: {}", e.getMessage());
+                    log.warn("Naver fetchRange message parse failed: {}", e.getMessage());
                 }
             }
             return mails;
         } catch (Exception e) {
-            log.error("Naver IMAP fetchOlderMails failed: {}", e.getMessage());
-            throw new RuntimeException("Naver 이전 메일 조회 실패", e);
+            log.error("Naver IMAP fetchRange failed [{}-{}]: {}", from, to, e.getMessage());
+            throw new RuntimeException("Naver 메일 범위 조회 실패", e);
         } finally {
             closeFolder(inbox);
             closeStore(store);
