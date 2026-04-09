@@ -41,6 +41,11 @@ public class JwtFilter extends OncePerRequestFilter {
         if (bearer != null && bearer.startsWith("Bearer ")) {
             return bearer.substring(7);
         }
+        // SSE: EventSource는 헤더를 설정할 수 없어 쿼리 파라미터로 토큰 전달
+        String queryToken = request.getParameter("token");
+        if (queryToken != null && !queryToken.isBlank()) {
+            return queryToken;
+        }
         return null;
     }
 }
