@@ -10,6 +10,7 @@ public interface MailAccountRepository {
     MailAccount save(MailAccount mailAccount);
     Optional<MailAccount> findById(Long id);
     Optional<MailAccount> findByUserIdAndProvider(Long userId, MailProvider provider);
+    Optional<MailAccount> findByUserIdAndEmailAddress(Long userId, String emailAddress);
     Optional<MailAccount> findByEmailAddress(String emailAddress);
     List<MailAccount> findAllByUserId(Long userId);
     List<MailAccount> findAll();

@@ -28,13 +28,13 @@ public class MailAccountService implements MailAccountUseCase {
                 ? aesEncryptor.encrypt(command.refreshToken())
                 : null;
 
-        mailAccountRepository.findByUserIdAndProvider(command.userId(), command.provider())
+        mailAccountRepository.findByUserIdAndEmailAddress(command.userId(), command.emailAddress())
                 .ifPresentOrElse(
                         mailAccount -> updateTokens(mailAccount, encryptedAccessToken, encryptedRefreshToken, command),
                         () -> createMailAccount(command, encryptedAccessToken, encryptedRefreshToken)
                 );
 
-        return mailAccountRepository.findByUserIdAndProvider(command.userId(), command.provider())
+        return mailAccountRepository.findByUserIdAndEmailAddress(command.userId(), command.emailAddress())
                 .orElseThrow().getId();
     }
 
