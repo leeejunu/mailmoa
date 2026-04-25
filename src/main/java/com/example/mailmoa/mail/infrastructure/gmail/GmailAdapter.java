@@ -13,18 +13,15 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
-import org.springframework.web.reactive.function.client.WebClient;
-import org.springframework.web.reactive.function.client.WebClientResponseException;
-import reactor.core.publisher.Flux;
-import reactor.core.publisher.Mono;
-import reactor.util.function.Tuples;
-import reactor.util.retry.Retry;
+import org.springframework.http.client.JdkClientHttpRequestFactory;
+import org.springframework.web.client.HttpClientErrorException;
+import org.springframework.web.client.RestClient;
+import org.springframework.web.client.RestClientResponseException;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
 import jakarta.mail.internet.InternetAddress;
 import java.nio.charset.StandardCharsets;
-import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
@@ -33,6 +30,10 @@ import java.util.Base64;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Semaphore;
 
 @Slf4j
 @Component
@@ -41,8 +42,9 @@ public class GmailAdapter implements GmailPort, GmailWatchPort, MailSyncPort, Ma
 
     private static final String GMAIL_API_BASE = "https://gmail.googleapis.com/gmail/v1/users/me";
     private static final int PAGE_SIZE = 100;
-    // 동시 요청 수: 10개 × 5 quota units = 50 units/순간, 요청당 ~200ms → ~250 units/초
     private static final int CONCURRENCY = 200;
+    // 동시 요청 수를 제한하는 세마포어 (rate limit 대응)
+    private static final Semaphore RATE_LIMITER = new Semaphore(CONCURRENCY);
 
     @Value("${spring.security.oauth2.client.registration.google.client-id}")
     private String clientId;
@@ -51,7 +53,10 @@ public class GmailAdapter implements GmailPort, GmailWatchPort, MailSyncPort, Ma
     private String clientSecret;
 
     private final ObjectMapper objectMapper;
-    private final WebClient webClient = WebClient.create();
+    // JdkClientHttpRequestFactory: java.net.http.HttpClient 사용 → synchronized 블록 없음 → 가상 스레드 pinning 없음
+    private final RestClient restClient = RestClient.builder()
+            .requestFactory(new JdkClientHttpRequestFactory())
+            .build();
 
     // -------------------------------------------------------------------------
     // MailSyncPort
@@ -63,16 +68,17 @@ public class GmailAdapter implements GmailPort, GmailWatchPort, MailSyncPort, Ma
     }
 
     @Override
-    public Mono<SyncResponseResult> fetchMails(MailAccount account, String credential) {
+    public SyncResponseResult fetchMails(MailAccount account, String credential) {
         if (account.getLastHistoryId() == null) {
-            return fullSyncReactive(credential);
+            return fullSync(credential);
         }
-        return incrementalSyncReactive(credential, account.getLastHistoryId());
+        return incrementalSync(credential, account.getLastHistoryId());
     }
 
     @Override
-    public Flux<MailSyncData> fetchRemaining(MailAccount account, String credential, String continuationToken) {
-        return fetchMessagesStreaming(credential, collectAllPageIds(credential, continuationToken));
+    public List<MailSyncData> fetchRemaining(MailAccount account, String credential, String continuationToken) {
+        List<String> ids = collectAllPageIds(credential, continuationToken);
+        return fetchMessagesParallel(credential, ids);
     }
 
     // -------------------------------------------------------------------------
@@ -80,18 +86,17 @@ public class GmailAdapter implements GmailPort, GmailWatchPort, MailSyncPort, Ma
     // -------------------------------------------------------------------------
 
     @Override
-    public Mono<Void> setupWatch(String accessToken, String topicName) {
+    public void setupWatch(String accessToken, String topicName) {
         Map<String, Object> body = Map.of(
                 "topicName", topicName,
                 "labelIds", List.of("INBOX")
         );
-        return webClient.post()
+        restClient.post()
                 .uri(GMAIL_API_BASE + "/watch")
                 .header("Authorization", "Bearer " + accessToken)
-                .bodyValue(body)
+                .body(body)
                 .retrieve()
-                .toBodilessEntity()
-                .then();
+                .toBodilessEntity();
     }
 
     // -------------------------------------------------------------------------
@@ -103,13 +108,12 @@ public class GmailAdapter implements GmailPort, GmailWatchPort, MailSyncPort, Ma
         String body = "grant_type=refresh_token&refresh_token=" + refreshToken
                 + "&client_id=" + clientId + "&client_secret=" + clientSecret;
 
-        JsonNode response = webClient.post()
+        JsonNode response = restClient.post()
                 .uri("https://oauth2.googleapis.com/token")
                 .header("Content-Type", "application/x-www-form-urlencoded")
-                .bodyValue(body)
+                .body(body)
                 .retrieve()
-                .bodyToMono(JsonNode.class)
-                .block();
+                .body(JsonNode.class);
 
         String accessToken = response.get("access_token").asText();
         long expiresIn = response.path("expires_in").asLong(3600);
@@ -118,152 +122,195 @@ public class GmailAdapter implements GmailPort, GmailWatchPort, MailSyncPort, Ma
 
     @Override
     public void trashMail(String accessToken, String externalMessageId) {
-        webClient.post()
+        restClient.post()
                 .uri(GMAIL_API_BASE + "/messages/{id}/trash", externalMessageId)
                 .header("Authorization", "Bearer " + accessToken)
                 .retrieve()
-                .toBodilessEntity()
-                .block();
+                .toBodilessEntity();
     }
 
     // -------------------------------------------------------------------------
     // 내부 - full sync
     // -------------------------------------------------------------------------
 
-    private Mono<SyncResponseResult> fullSyncReactive(String accessToken) {
-        // profile 조회와 전체 ID 수집을 동시에 시작 (백프레셔 없이)
-        Mono<String> historyIdMono = webClient.get()
+    private SyncResponseResult fullSync(String accessToken) {
+        // profile 조회와 전체 ID 수집을 가상 스레드로 병렬 실행
+        try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+            var historyIdFuture = CompletableFuture.supplyAsync(
+                    () -> fetchProfileHistoryId(accessToken), executor);
+            var idsFuture = CompletableFuture.supplyAsync(
+                    () -> collectAllPageIds(accessToken, null), executor);
+
+            String historyId = historyIdFuture.join();
+            List<String> allIds = idsFuture.join();
+            log.info("[Gmail ID 수집 완료] 총 {}개", allIds.size());
+
+            List<MailSyncData> mails = fetchMessagesParallel(accessToken, allIds);
+            log.info("[Gmail 전체 동기화] {}개 완료", mails.size());
+            return new SyncResponseResult(mails, historyId, null);
+        }
+    }
+
+    private String fetchProfileHistoryId(String accessToken) {
+        JsonNode profile = restClient.get()
                 .uri(GMAIL_API_BASE + "/profile")
                 .header("Authorization", "Bearer " + accessToken)
                 .retrieve()
-                .bodyToMono(JsonNode.class)
-                .map(p -> p != null ? p.path("historyId").asText(null) : null);
-
-        Mono<List<String>> allIdsMono = collectAllPageIds(accessToken, null).collectList();
-
-        return Mono.zip(historyIdMono, allIdsMono)
-                .flatMap(tuple -> {
-                    String historyId = tuple.getT1();
-                    List<String> allIds = tuple.getT2();
-                    log.info("[Gmail ID 수집 완료] 총 {}개", allIds.size());
-                    return fetchMessagesStreaming(accessToken, Flux.fromIterable(allIds))
-                            .collectList()
-                            .map(mails -> {
-                                log.info("[Gmail 전체 동기화] {}개 완료", mails.size());
-                                return new SyncResponseResult(mails, historyId, null);
-                            });
-                });
+                .body(JsonNode.class);
+        return profile != null ? profile.path("historyId").asText(null) : null;
     }
 
     // -------------------------------------------------------------------------
     // 내부 - incremental sync
     // -------------------------------------------------------------------------
 
-    private Mono<SyncResponseResult> incrementalSyncReactive(String accessToken, String lastHistoryId) {
-        return fetchHistoryIds(accessToken, lastHistoryId, null, new ArrayList<>(), lastHistoryId)
-                .flatMap(pair -> fetchMessagesStreaming(accessToken, Flux.fromIterable(pair.getT1()))
-                        .collectList()
-                        .map(mails -> new SyncResponseResult(mails, pair.getT2(), null)));
+    private SyncResponseResult incrementalSync(String accessToken, String lastHistoryId) {
+        HistoryResult history = fetchHistoryIds(accessToken, lastHistoryId);
+        List<MailSyncData> mails = fetchMessagesParallel(accessToken, history.ids());
+        return new SyncResponseResult(mails, history.historyId(), null);
     }
 
-    private Mono<reactor.util.function.Tuple2<List<String>, String>> fetchHistoryIds(
-            String accessToken, String startHistoryId, String pageToken,
-            List<String> accumulated, String currentHistoryId) {
+    private HistoryResult fetchHistoryIds(String accessToken, String startHistoryId) {
+        List<String> ids = new ArrayList<>();
+        String latestHistoryId = startHistoryId;
+        String pageToken = null;
 
-        String uri = GMAIL_API_BASE + "/history?startHistoryId=" + startHistoryId
-                + "&historyTypes=messageAdded&maxResults=" + PAGE_SIZE;
-        if (pageToken != null) uri += "&pageToken=" + pageToken;
+        do {
+            String uri = GMAIL_API_BASE + "/history?startHistoryId=" + startHistoryId
+                    + "&historyTypes=messageAdded&maxResults=" + PAGE_SIZE;
+            if (pageToken != null) uri += "&pageToken=" + pageToken;
 
-        return webClient.get()
-                .uri(uri)
-                .header("Authorization", "Bearer " + accessToken)
-                .retrieve()
-                .bodyToMono(JsonNode.class)
-                .flatMap(response -> {
-                    if (response == null) {
-                        return Mono.just(Tuples.of(accumulated, currentHistoryId));
-                    }
+            JsonNode response = restClient.get()
+                    .uri(uri)
+                    .header("Authorization", "Bearer " + accessToken)
+                    .retrieve()
+                    .body(JsonNode.class);
 
-                    String latestHistoryId = response.has("historyId")
-                            ? response.get("historyId").asText()
-                            : currentHistoryId;
+            if (response == null) break;
 
-                    if (response.has("history")) {
-                        for (JsonNode history : response.get("history")) {
-                            if (history.has("messagesAdded")) {
-                                for (JsonNode added : history.get("messagesAdded")) {
-                                    accumulated.add(added.path("message").path("id").asText());
-                                }
-                            }
+            if (response.has("historyId")) {
+                latestHistoryId = response.get("historyId").asText();
+            }
+            if (response.has("history")) {
+                for (JsonNode history : response.get("history")) {
+                    if (history.has("messagesAdded")) {
+                        for (JsonNode added : history.get("messagesAdded")) {
+                            ids.add(added.path("message").path("id").asText());
                         }
                     }
+                }
+            }
 
-                    String nextPage = response.has("nextPageToken") ? response.get("nextPageToken").asText() : null;
-                    if (nextPage != null) {
-                        return fetchHistoryIds(accessToken, startHistoryId, nextPage, accumulated, latestHistoryId);
-                    }
-                    return Mono.just(Tuples.of(accumulated, latestHistoryId));
-                });
+            pageToken = response.has("nextPageToken") ? response.get("nextPageToken").asText() : null;
+        } while (pageToken != null);
+
+        return new HistoryResult(ids, latestHistoryId);
+    }
+
+    private record HistoryResult(List<String> ids, String historyId) {}
+
+    // -------------------------------------------------------------------------
+    // 내부 - 전체 페이지 ID 수집 (순차 페이지네이션)
+    // -------------------------------------------------------------------------
+
+    private List<String> collectAllPageIds(String accessToken, String startPageToken) {
+        List<String> ids = new ArrayList<>();
+        String cursor = startPageToken;
+
+        do {
+            String uri = GMAIL_API_BASE + "/messages?maxResults=" + PAGE_SIZE + "&fields=messages/id,nextPageToken";
+            if (cursor != null) uri += "&pageToken=" + cursor;
+
+            JsonNode response = restClient.get()
+                    .uri(uri)
+                    .header("Authorization", "Bearer " + accessToken)
+                    .retrieve()
+                    .body(JsonNode.class);
+
+            if (response == null || !response.has("messages")) break;
+
+            response.get("messages").forEach(msg -> ids.add(msg.get("id").asText()));
+            log.info("[Gmail ID 수집] 누적 {}개", ids.size());
+
+            cursor = response.has("nextPageToken") ? response.get("nextPageToken").asText() : null;
+        } while (cursor != null);
+
+        return ids;
     }
 
     // -------------------------------------------------------------------------
-    // 내부 - 전체 페이지 ID 스트리밍 (첫 페이지부터 순차 수집)
+    // 내부 - 메시지 병렬 조회 (가상 스레드 + 세마포어 + 429 재시도)
     // -------------------------------------------------------------------------
 
-    private Flux<String> collectAllPageIds(String accessToken, String pageToken) {
-        String uri = GMAIL_API_BASE + "/messages?maxResults=" + PAGE_SIZE + "&fields=messages/id,nextPageToken";
-        if (pageToken != null) uri += "&pageToken=" + pageToken;
-
-        return webClient.get()
-                .uri(uri)
-                .header("Authorization", "Bearer " + accessToken)
-                .retrieve()
-                .bodyToMono(JsonNode.class)
-                .flatMapMany(response -> {
-                    if (response == null || !response.has("messages")) return Flux.empty();
-
-                    List<String> ids = new ArrayList<>();
-                    response.get("messages").forEach(msg -> ids.add(msg.get("id").asText()));
-                    log.info("[Gmail ID 수집] {}개", ids.size());
-
-                    String nextPage = response.has("nextPageToken") ? response.get("nextPageToken").asText() : null;
-                    Flux<String> current = Flux.fromIterable(ids);
-
-                    if (nextPage != null) {
-                        return current.concatWith(collectAllPageIds(accessToken, nextPage));
-                    }
-                    return current;
-                });
-    }
-
-    // -------------------------------------------------------------------------
-    // 내부 - 메시지 조회 (ID Flux를 받아 동시 요청 + 429 재시도)
-    // -------------------------------------------------------------------------
-
-    private Flux<MailSyncData> fetchMessagesStreaming(String accessToken, Flux<String> idFlux) {
+    private List<MailSyncData> fetchMessagesParallel(String accessToken, List<String> ids) {
+        if (ids.isEmpty()) return List.of();
         long start = System.currentTimeMillis();
-        return idFlux
-                .flatMap(id -> fetchSingleMessage(accessToken, id)
-                        .retryWhen(Retry.backoff(5, Duration.ofMillis(100))
-                                .maxBackoff(Duration.ofSeconds(5))
-                                .filter(ex -> ex instanceof WebClientResponseException wex
-                                        && wex.getStatusCode().value() == 429))
-                        .onErrorResume(ex -> {
-                            log.warn("[유실] 메시지 조회 실패 - id: {}", id);
-                            return Mono.empty();
-                        }),
-                        CONCURRENCY)
-                .doOnComplete(() -> log.info("[Gmail] 조회 완료 - 소요: {}ms", System.currentTimeMillis() - start));
+
+        try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+            List<CompletableFuture<MailSyncData>> futures = ids.stream()
+                    .map(id -> CompletableFuture.supplyAsync(
+                            () -> fetchSingleMessageWithRetry(accessToken, id), executor))
+                    .toList();
+
+            List<MailSyncData> result = futures.stream()
+                    .map(CompletableFuture::join)
+                    .filter(Objects::nonNull)
+                    .toList();
+
+            log.info("[Gmail] 조회 완료 - 소요: {}ms", System.currentTimeMillis() - start);
+            return result;
+        }
     }
 
-    private Mono<MailSyncData> fetchSingleMessage(String accessToken, String messageId) {
-        return webClient.get()
-                .uri(GMAIL_API_BASE + "/messages/" + messageId
-                        + "?format=metadata&metadataHeaders=Subject&metadataHeaders=From&fields=id,snippet,internalDate,payload/headers")
-                .header("Authorization", "Bearer " + accessToken)
-                .retrieve()
-                .bodyToMono(JsonNode.class)
-                .map(this::toMailSyncData);
+    private MailSyncData fetchSingleMessageWithRetry(String accessToken, String messageId) {
+        int maxRetries = 5;
+        long delay = 100;
+
+        for (int i = 0; i <= maxRetries; i++) {
+            RATE_LIMITER.acquireUninterruptibly();
+            try {
+                JsonNode message = restClient.get()
+                        .uri(GMAIL_API_BASE + "/messages/" + messageId
+                                + "?format=metadata&metadataHeaders=Subject&metadataHeaders=From&fields=id,snippet,internalDate,payload/headers")
+                        .header("Authorization", "Bearer " + accessToken)
+                        .retrieve()
+                        .body(JsonNode.class);
+                return toMailSyncData(message);
+            } catch (RestClientResponseException e) {
+                int status = e.getStatusCode().value();
+                // 429(rate limit) 또는 5xx(서버 일시 오류)는 재시도
+                boolean retryable = (status == 429 || status >= 500);
+                if (retryable && i < maxRetries) {
+                    log.debug("[재시도 {}/{}] id: {}, status: {}", i + 1, maxRetries, messageId, status);
+                    sleep(delay);
+                    delay = Math.min(delay * 2, 5000);
+                } else {
+                    log.warn("[유실] 메시지 조회 실패 - id: {}, status: {}", messageId, status);
+                    return null;
+                }
+            } catch (Exception e) {
+                // 네트워크 오류 등 일시적 장애도 재시도
+                if (i < maxRetries) {
+                    log.debug("[재시도 {}/{}] id: {}, error: {}", i + 1, maxRetries, messageId, e.getMessage());
+                    sleep(delay);
+                    delay = Math.min(delay * 2, 5000);
+                } else {
+                    log.warn("[유실] 메시지 조회 실패 - id: {}, error: {}", messageId, e.getMessage());
+                    return null;
+                }
+            } finally {
+                RATE_LIMITER.release();
+            }
+        }
+        return null;
+    }
+
+    private void sleep(long millis) {
+        try {
+            Thread.sleep(millis);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
     }
 
     private MailSyncData toMailSyncData(JsonNode message) {
@@ -297,12 +344,11 @@ public class GmailAdapter implements GmailPort, GmailWatchPort, MailSyncPort, Ma
 
     @Override
     public String fetchMailBody(MailAccount account, String credential, String externalMessageId) {
-        JsonNode message = webClient.get()
+        JsonNode message = restClient.get()
                 .uri(GMAIL_API_BASE + "/messages/" + externalMessageId + "?format=full")
                 .header("Authorization", "Bearer " + credential)
                 .retrieve()
-                .bodyToMono(JsonNode.class)
-                .block();
+                .body(JsonNode.class);
         if (message == null) return "";
 
         JsonNode payload = message.get("payload");
@@ -337,12 +383,11 @@ public class GmailAdapter implements GmailPort, GmailWatchPort, MailSyncPort, Ma
                     String attachmentId = payload.path("body").path("attachmentId").asText("");
                     if (!attachmentId.isEmpty()) {
                         try {
-                            JsonNode res = webClient.get()
+                            JsonNode res = restClient.get()
                                     .uri(GMAIL_API_BASE + "/messages/" + messageId + "/attachments/" + attachmentId)
                                     .header("Authorization", "Bearer " + accessToken)
                                     .retrieve()
-                                    .bodyToMono(JsonNode.class)
-                                    .block();
+                                    .body(JsonNode.class);
                             String attachData = res != null ? res.path("data").asText("") : "";
                             if (!attachData.isEmpty()) cidMap.put(contentId, "data:" + mimeType + ";base64," + attachData);
                         } catch (Exception e) {

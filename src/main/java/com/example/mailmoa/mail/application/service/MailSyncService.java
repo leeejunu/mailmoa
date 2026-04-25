@@ -16,8 +16,6 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
-import reactor.core.publisher.Mono;
-import reactor.core.scheduler.Schedulers;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
@@ -79,11 +77,8 @@ public class MailSyncService {
                 .forEach(account -> {
                     try {
                         String credential = mailAccountTokenService.getValidAccessToken(account);
-                        gmailWatchPort.setupWatch(credential, pubsubTopicName)
-                                .subscribe(
-                                        v -> log.info("[Watch 갱신] accountId={}", account.getId()),
-                                        e -> log.warn("[Watch 갱신 실패] accountId={}: {}", account.getId(), e.getMessage())
-                                );
+                        gmailWatchPort.setupWatch(credential, pubsubTopicName);
+                        log.info("[Watch 갱신] accountId={}", account.getId());
                     } catch (Exception e) {
                         log.warn("[Watch 갱신 실패] accountId={}: {}", account.getId(), e.getMessage());
                     }
@@ -129,11 +124,21 @@ public class MailSyncService {
             log.info("[동기화 스킵] 이미 진행 중 - accountId={}", account.getId());
             return;
         }
+        Thread.ofVirtual()
+                .name("mail-sync-" + account.getId())
+                .start(() -> {
+                    try {
+                        doSync(account);
+                    } finally {
+                        syncingAccounts.remove(account.getId());
+                    }
+                });
+    }
 
+    private void doSync(MailAccount account) {
         MailSyncPort port = syncPorts.get(account.getProvider());
         if (port == null) {
             log.warn("지원하지 않는 메일 프로바이더: {}", account.getProvider());
-            syncingAccounts.remove(account.getId());
             return;
         }
 
@@ -143,55 +148,39 @@ public class MailSyncService {
 
         try {
             String credential = mailAccountTokenService.getValidAccessToken(account);
+            SyncResponseResult result = port.fetchMails(account, credential);
 
-            port.fetchMails(account, credential)
-                    .publishOn(Schedulers.boundedElastic())
-                    .flatMap(result -> handleFirstPageResult(account, port, credential, result, totalStart))
-                    .then(isFirstGmailSync
-                            ? gmailWatchPort.setupWatch(credential, pubsubTopicName)
-                                    .doOnSuccess(v -> log.info("[Watch 설정] accountId={}", account.getId()))
-                                    .onErrorResume(e -> {
-                                        log.warn("[Watch 설정 실패] accountId={}: {}", account.getId(), e.getMessage());
-                                        return Mono.empty();
-                                    })
-                            : Mono.<Void>empty())
-                    .doFinally(signal -> syncingAccounts.remove(account.getId()))
-                    .subscribe(
-                            v -> {},
-                            e -> log.warn("[동기화 실패] accountId={}: {}", account.getId(), e.getMessage())
-                    );
+            if (result.historyId() != null) {
+                account.updateLastHistoryId(result.historyId());
+                mailAccountRepository.save(account);
+            }
+
+            List<Mail> saved = saveNewMails(account.getId(), result.mails());
+            pushIfAny(account.getUserId(), saved);
+
+            log.info("[동기화] accountId={}, 저장: {}개, 다음 페이지: {}, 소요: {}ms",
+                    account.getId(), saved.size(), result.nextPageToken() != null,
+                    System.currentTimeMillis() - totalStart);
+
+            if (result.nextPageToken() != null) {
+                List<MailSyncData> remaining = port.fetchRemaining(account, credential, result.nextPageToken());
+                List<Mail> savedRemaining = saveNewMails(account.getId(), remaining);
+                pushIfAny(account.getUserId(), savedRemaining);
+                log.info("[백그라운드 동기화 완료] accountId={}, {}개 저장, 전체 소요: {}ms",
+                        account.getId(), savedRemaining.size(), System.currentTimeMillis() - totalStart);
+            }
+
+            if (isFirstGmailSync) {
+                try {
+                    gmailWatchPort.setupWatch(credential, pubsubTopicName);
+                    log.info("[Watch 설정] accountId={}", account.getId());
+                } catch (Exception e) {
+                    log.warn("[Watch 설정 실패] accountId={}: {}", account.getId(), e.getMessage());
+                }
+            }
         } catch (Exception e) {
-            syncingAccounts.remove(account.getId());
             log.warn("[동기화 실패] accountId={}: {}", account.getId(), e.getMessage());
         }
-    }
-
-    private Mono<Void> handleFirstPageResult(MailAccount account, MailSyncPort port,
-                                              String credential, SyncResponseResult result, long totalStart) {
-        if (result.historyId() != null) {
-            account.updateLastHistoryId(result.historyId());
-            mailAccountRepository.save(account);
-        }
-
-        List<Mail> saved = saveNewMails(account.getId(), result.mails());
-        pushIfAny(account.getUserId(), saved);
-
-        log.info("[동기화] accountId={}, 저장: {}개, 다음 페이지: {}, 소요: {}ms",
-                account.getId(), saved.size(), result.nextPageToken() != null,
-                System.currentTimeMillis() - totalStart);
-
-        if (result.nextPageToken() == null) return Mono.empty();
-
-        return port.fetchRemaining(account, credential, result.nextPageToken())
-                .collectList()
-                .publishOn(Schedulers.boundedElastic())
-                .flatMap(remaining -> {
-                    List<Mail> savedRemaining = saveNewMails(account.getId(), remaining);
-                    pushIfAny(account.getUserId(), savedRemaining);
-                    log.info("[백그라운드 동기화 완료] accountId={}, {}개 저장, 전체 소요: {}ms",
-                            account.getId(), savedRemaining.size(), System.currentTimeMillis() - totalStart);
-                    return Mono.<Void>empty();
-                });
     }
 
     private List<Mail> saveNewMails(Long accountId, List<MailSyncData> mails) {

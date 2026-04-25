@@ -21,10 +21,8 @@ import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
 import java.util.Properties;
-
-import reactor.core.publisher.Flux;
-import reactor.core.publisher.Mono;
-import reactor.core.scheduler.Schedulers;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Executors;
 
 @Slf4j
 @Component
@@ -38,18 +36,16 @@ public class NaverMailAdapter implements NaverMailPort, MailSyncPort, MailBodyPo
     }
 
     @Override
-    public Mono<SyncResponseResult> fetchMails(MailAccount account, String credential) {
-        return Mono.fromCallable(() -> {
-            String lastUid = account.getLastHistoryId();
-            if (lastUid == null) {
-                return fetchInitial(account.getEmailAddress(), credential);
-            }
-            return fetchIncremental(account.getEmailAddress(), credential, lastUid);
-        }).subscribeOn(Schedulers.boundedElastic());
+    public SyncResponseResult fetchMails(MailAccount account, String credential) {
+        String lastUid = account.getLastHistoryId();
+        if (lastUid == null) {
+            return fetchInitial(account.getEmailAddress(), credential);
+        }
+        return fetchIncremental(account.getEmailAddress(), credential, lastUid);
     }
 
     @Override
-    public Flux<MailSyncData> fetchRemaining(MailAccount account, String credential, String continuationToken) {
+    public List<MailSyncData> fetchRemaining(MailAccount account, String credential, String continuationToken) {
         int remaining = Integer.parseInt(continuationToken);
         String email = account.getEmailAddress();
 
@@ -59,10 +55,15 @@ public class NaverMailAdapter implements NaverMailPort, MailSyncPort, MailBodyPo
             chunks.add(new int[]{from, to});
         }
 
-        return Flux.fromIterable(chunks)
-                .flatMap(range -> Mono.fromCallable(() -> fetchRange(email, credential, range[0], range[1]))
-                        .subscribeOn(Schedulers.boundedElastic()))
-                .flatMap(Flux::fromIterable);
+        try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+            List<CompletableFuture<List<MailSyncData>>> futures = chunks.stream()
+                    .map(range -> CompletableFuture.supplyAsync(
+                            () -> fetchRange(email, credential, range[0], range[1]), executor))
+                    .toList();
+            return futures.stream()
+                    .flatMap(f -> f.join().stream())
+                    .toList();
+        }
     }
 
     private static final String IMAP_HOST = "imap.naver.com";
@@ -332,7 +333,6 @@ public class NaverMailAdapter implements NaverMailPort, MailSyncPort, MailBodyPo
                     ? sentDate.toInstant().atZone(ZoneId.systemDefault()).toLocalDateTime()
                     : LocalDateTime.now();
 
-            // 헤더만 저장, body는 클릭 시 on-demand 로딩
             return new MailSyncData(String.valueOf(uid), subject, senderName, senderEmail,
                     "", "", receivedAt, "NAVER");
         } catch (Exception e) {
