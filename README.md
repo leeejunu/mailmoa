@@ -23,31 +23,6 @@ Mailmoa는 Gmail, Naver 메일을 하나의 화면에서 확인하고 관리할 
 
 ---
 
-### 설치 및 실행
-
-```bash
-# 1. 레포지토리 클론
-git clone https://github.com/your-username/mailmoa.git
-cd mailmoa
-
-# 2. Redis 실행 (Docker)
-docker-compose up -d
-
-# 3. MySQL DB 생성
-# mysql -u root -p
-# CREATE DATABASE mailmoa CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-
-# 4. 설정 파일 수정
-# src/main/resources/application.yaml 에서 DB 정보, JWT 시크릿 등 입력
-
-# 5. 서버 실행
-./gradlew bootRun
-```
-
-서버는 `http://localhost:8080` 에서 실행됩니다.
-
----
-
 ## 기술 스택
 
 **Environment**
